@@ -92,7 +92,8 @@ export function useProfile() {
 
   const getStoragePercentage = (): number => {
     if (!profile) return 0;
-    return Math.round((profile.storage_used / profile.storage_limit) * 100);
+    const raw = (profile.storage_used / profile.storage_limit) * 100;
+    return Math.round(raw * 10) / 10; // 1 decimal place, e.g. 0.2
   };
 
   return {

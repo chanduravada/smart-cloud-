@@ -57,7 +57,7 @@ export function StorageIndicator() {
       <div className="h-2 bg-muted rounded-full overflow-hidden">
         <div
           className={cn('h-full rounded-full bg-gradient-to-r transition-all duration-500', barColor)}
-          style={{ width: `${Math.min(percentage, 100)}%` }}
+          style={{ width: `${profile.storage_used > 0 ? Math.max(percentage, 0.5) : 0}%` }}
         />
       </div>
 

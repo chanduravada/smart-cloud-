@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, KeyboardEvent, ClipboardEvent } from 'react';
-import { useNavigate, Navigate } from 'react-router-dom';
+import { useNavigate, Navigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
+import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -8,7 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from 'sonner';
 import {
   Cloud, Loader2, Mail, Lock, User, Shield, Sparkles, Zap,
-  CheckCircle2, ArrowLeft, RefreshCw, MailCheck
+  CheckCircle2, ArrowLeft, RefreshCw, MailCheck, KeyRound
 } from 'lucide-react';
 import { z } from 'zod';
 import { cn } from '@/lib/utils';
@@ -17,7 +18,7 @@ const emailSchema = z.string().email('Please enter a valid email address');
 const passwordSchema = z.string().min(6, 'Password must be at least 6 characters');
 const nameSchema = z.string().min(2, 'Name must be at least 2 characters');
 
-type Step = 'credentials' | 'otp';
+type Step = 'credentials' | 'otp' | 'forgot' | 'reset';
 
 const benefits = [
   { icon: Sparkles, text: 'AI-powered file classification' },
@@ -117,6 +118,19 @@ export default function Auth() {
   const [resendCooldown, setResendCooldown] = useState(0);
   // Set to true after OTP verified — triggers navigation via useEffect
   const [otpVerified, setOtpVerified] = useState(false);
+
+  // Forgot / Reset password state
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [searchParams] = useSearchParams();
+
+  // Detect password reset token in URL (?type=recovery)
+  useEffect(() => {
+    if (searchParams.get('type') === 'recovery') {
+      setStep('reset');
+    }
+  }, [searchParams]);
 
   // Countdown for resend button
   useEffect(() => {
@@ -247,6 +261,44 @@ export default function Auth() {
   const handleResend = async () => {
     if (resendCooldown > 0) return;
     await triggerOtp(otpEmail);
+  };
+
+  // ── Forgot Password ───────────────────────────────────────────────────────
+
+  const handleForgotPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try { emailSchema.parse(forgotEmail); }
+    catch (err) { if (err instanceof z.ZodError) { toast.error(err.errors[0].message); return; } }
+
+    setIsLoading(true);
+    const { error } = await supabase.auth.resetPasswordForEmail(forgotEmail, {
+      redirectTo: `${window.location.origin}/auth?type=recovery`,
+    });
+    setIsLoading(false);
+
+    if (error) { toast.error(error.message); return; }
+    toast.success('Password reset link sent! Check your email.');
+    setStep('credentials');
+    setForgotEmail('');
+  };
+
+  // ── Reset Password (from email link) ─────────────────────────────────────
+
+  const handleResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (newPassword !== confirmPassword) { toast.error('Passwords do not match'); return; }
+    try { passwordSchema.parse(newPassword); }
+    catch (err) { if (err instanceof z.ZodError) { toast.error(err.errors[0].message); return; } }
+
+    setIsLoading(true);
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    setIsLoading(false);
+
+    if (error) { toast.error(error.message); return; }
+    toast.success('Password updated! You can now sign in.');
+    setStep('credentials');
+    setNewPassword('');
+    setConfirmPassword('');
   };
 
   // ─── Render ───────────────────────────────────────────────────────────────
@@ -385,6 +437,104 @@ export default function Auth() {
               </p>
             </div>
 
+          ) : step === 'forgot' ? (
+            /* ── Forgot Password Step ────────────────────────────── */
+            <div className="animate-fade-in">
+              <button
+                onClick={() => setStep('credentials')}
+                className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors mb-8 group"
+              >
+                <ArrowLeft className="h-4 w-4 group-hover:-translate-x-0.5 transition-transform" />
+                Back to Sign In
+              </button>
+
+              <div className="text-center mb-8">
+                <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl gradient-primary shadow-glow mb-4">
+                  <KeyRound className="h-8 w-8 text-primary-foreground" />
+                </div>
+                <h2 className="text-2xl font-display font-bold mb-2">Reset Password</h2>
+                <p className="text-muted-foreground text-sm">Enter your email and we'll send you a reset link.</p>
+              </div>
+
+              <form onSubmit={handleForgotPassword} className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="forgot-email" className="text-sm font-medium">Email address</Label>
+                  <div className="relative">
+                    <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      id="forgot-email"
+                      type="email"
+                      placeholder="you@example.com"
+                      value={forgotEmail}
+                      onChange={e => setForgotEmail(e.target.value)}
+                      className="pl-10 h-11 rounded-xl"
+                      disabled={isLoading}
+                      required
+                    />
+                  </div>
+                </div>
+                <Button type="submit" className="w-full h-11 gradient-primary font-semibold rounded-xl" disabled={isLoading}>
+                  {isLoading
+                    ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />Sending...</>
+                    : <><MailCheck className="h-4 w-4 mr-2" />Send Reset Link</>
+                  }
+                </Button>
+              </form>
+            </div>
+
+          ) : step === 'reset' ? (
+            /* ── Reset Password Step (from email link) ────────────── */
+            <div className="animate-fade-in">
+              <div className="text-center mb-8">
+                <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl gradient-primary shadow-glow mb-4">
+                  <Lock className="h-8 w-8 text-primary-foreground" />
+                </div>
+                <h2 className="text-2xl font-display font-bold mb-2">Set New Password</h2>
+                <p className="text-muted-foreground text-sm">Choose a strong password for your account.</p>
+              </div>
+
+              <form onSubmit={handleResetPassword} className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="new-password" className="text-sm font-medium">New Password</Label>
+                  <div className="relative">
+                    <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      id="new-password"
+                      type="password"
+                      placeholder="Min. 6 characters"
+                      value={newPassword}
+                      onChange={e => setNewPassword(e.target.value)}
+                      className="pl-10 h-11 rounded-xl"
+                      disabled={isLoading}
+                      required
+                    />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="confirm-password" className="text-sm font-medium">Confirm Password</Label>
+                  <div className="relative">
+                    <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      id="confirm-password"
+                      type="password"
+                      placeholder="Re-enter new password"
+                      value={confirmPassword}
+                      onChange={e => setConfirmPassword(e.target.value)}
+                      className="pl-10 h-11 rounded-xl"
+                      disabled={isLoading}
+                      required
+                    />
+                  </div>
+                </div>
+                <Button type="submit" className="w-full h-11 gradient-primary font-semibold rounded-xl" disabled={isLoading}>
+                  {isLoading
+                    ? <><Loader2 className="h-4 w-4 animate-spin mr-2" />Updating...</>
+                    : 'Update Password'
+                  }
+                </Button>
+              </form>
+            </div>
+
           ) : (
             /* ── Credentials Step ─────────────────────────────── */
             <>
@@ -423,6 +573,15 @@ export default function Auth() {
                     <Button type="submit" className="w-full h-11 gradient-primary font-semibold rounded-xl mt-2" disabled={isLoading}>
                       {isLoading ? <><Loader2 className="h-4 w-4 animate-spin mr-2" /> Sending OTP...</> : 'Sign In'}
                     </Button>
+                    <div className="text-right">
+                      <button
+                        type="button"
+                        onClick={() => setStep('forgot')}
+                        className="text-xs text-primary hover:underline mt-1"
+                      >
+                        Forgot password?
+                      </button>
+                    </div>
                   </form>
                   <div className="flex items-center gap-3 mt-5 p-3 rounded-xl bg-primary/5 border border-primary/10">
                     <Shield className="h-4 w-4 text-primary shrink-0" />
