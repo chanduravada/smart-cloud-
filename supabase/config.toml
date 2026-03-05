@@ -1,0 +1,4 @@
+project_id = "kefjbrnyqyzkfhkkkcxx"
+
+[functions.classify-file]
+verify_jwt = false
